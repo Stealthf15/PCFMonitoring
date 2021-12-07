@@ -3,220 +3,194 @@
 namespace App\Http\Controllers;
 
 use App\Models\Source;
+use App\Models\PCFList;
 use Illuminate\Http\Request;
-use Alert;
-use Validator;
 use Yajra\Datatables\Datatables;
+use Illuminate\Support\Facades\DB;
+use RealRashid\SweetAlert\Facades\Alert;
+use App\Http\Requests\Source\StoreSourceRequest;
+use App\Http\Requests\Source\UpdateSourceRequest;
 
 class SourceController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function index(Request $request)
+    public function index()
     {
+        $this->authorize('pcf_source_access');
+        
+        return view('settings.source.index');
+    }
+
+    public function create()
+    {
+        $this->authorize('source_create');
+
+        return view('settings.source.create');
+    }
+
+    public function store(StoreSourceRequest $request)
+    {
+        $this->authorize('source_store');
+
+        DB::beginTransaction();
+
+        try {
+
+            Source::create($request->validated());
+            DB::commit();
+
+            Alert::success('Success', 'The source has been added');
+
+        }
+        catch (\Throwable $th) {
+            DB::rollBack();
+        }
+
+        return redirect()->route('settings.source.index');
+    }
+
+    public function update(UpdateSourceRequest $request)
+    {
+        $this->authorize('source_update');
+
+        DB::beginTransaction();
+
+        try {
+            $source = Source::findOrFail($request->source_id);
+            $source->update($request->validated());
+
+            $joins = DB::table('sources')
+                    ->join('p_c_f_lists', 'sources.id', '=', 'p_c_f_lists.source_id')
+                    ->select('sources.standard_price as standard_price', 'p_c_f_lists.sales as unit_price', 'p_c_f_lists.id as list_id')
+                    ->get();
+
+            foreach($joins as $join) {
+                $pcfList = PCFList::where('id', $join->list_id);
+                $join->standard_price <= $join->unit_price ? $asp = 'YES' : $asp = 'NO';
+
+                $pcfList->update([
+                    'above_standard_price' => $asp,
+                ]);
+            }
+            
+            DB::commit();
+
+            Alert::success('Success', 'The source has been updated');
+
+        }
+        catch (\Throwable $th) {
+            DB::rollBack();
+        }
+
+        return redirect()->route('settings.source.index');
+    }
+
+    public function adminSourceList(Request $request)
+    {
+        $this->authorize('source_access');
+
         if ($request->ajax()) {
+            $sources = Source::latest()
+                ->select('id', 'supplier', 'item_code', 'description', 'unit_price', 'currency_rate', 'tp_php', 'item_group', 'uom',
+                        'mandatory_peripherals', 'cost_of_peripherals', 'segment', 'item_category', 'standard_price', 'profitability')
+                ->get();
 
-            $getSource = Source::orderBy('id')->get();
-
-            return Datatables::of($getSource)
+            return Datatables::of($sources)
                 ->addIndexColumn()
-                ->addColumn('id', function ($data) {
-                    return $data->id;
-                })
-                ->addColumn('supplier', function ($data) {
-                    return $data->supplier;
-                })
-                ->addColumn('item_code', function ($data) {
-                    return $data->item_code;
-                })
-                ->addColumn('description', function ($data) {
-                    return $data->description;
-                })
                 ->addColumn('unit_price', function ($data) {
-                    return $data->unit_price;
-                })
-                ->addColumn('currency_rate', function ($data) {
-                    return $data->currency_rate;
+                    return number_format($data->unit_price, 2, '.', ',');
                 })
                 ->addColumn('tp_php', function ($data) {
-                    return $data->tp_php;
+                    return number_format($data->tp_php, 2, '.', ',');
                 })
                 ->addColumn('item_group', function ($data) {
+                    if (empty($data->item_group)) {
+                        return "None";
+                    }
                     return $data->item_group;
                 })
                 ->addColumn('uom', function ($data) {
+                    if (empty($data->uom)) {
+                        return "None";
+                    }
                     return $data->uom;
                 })
+                ->addColumn('segment', function ($data) {
+                    if (empty($data->segment)) {
+                        return "None";
+                    }
+                    return $data->segment;
+                })
                 ->addColumn('mandatory_peripherals', function ($data) {
+                    if (empty($data->mandatory_peripherals)) {
+                        return "None";
+                    }
                     return $data->mandatory_peripherals;
                 })
-                ->addColumn('cost_periph', function ($data) {
-                    return $data->cost_periph;
+                ->addColumn('cost_of_peripherals', function ($data) {
+                    if (empty($data->cost_of_peripherals)) {
+                        return 'None';
+                    }
+                    return number_format($data->cost_of_peripherals, 2, '.', ',');
+                })
+                ->addColumn('standard_price', function ($data) {
+                    return number_format($data->standard_price, 2, '.', ',');
                 })
                 ->addColumn('actions', function ($data) {
-                    return
-                        ' 
-                    <td>
-                        <a href="#" class="badge badge-info" data-toggle="modal"
-                            data-id="'.$data->id .'"
-                            data-supplier="'.$data->supplier .'"
-                            data-item_code="'.$data->item_code .'"
-                            data-description="'.$data->description .'"
-                            data-unit_price="'.$data->unit_price .'"
-                            data-currency_rate="'.$data->currency_rate .'"
-                            data-tp_php="'.$data->tp_php .'"
-                            data-item_group="'.$data->item_group .'"
-                            data-uom="'.$data->uom .'"
-                            data-mandatory_peripherals="'.$data->mandatory_peripherals .'"
-                            data-cost_periph="'.$data->cost_periph .'"
-                            data-target="#editSourceModal"
-                            onclick="editSource($(this))"><i
-                                class="far fa-edit"></i> 
-                            Edit</a>
-                    </td>
-                    ';
+                    if(auth()->user()->can('source_edit')) {
+                        return
+                        '<a href="javascript:void(0);" class="badge badge-info editSourceDetails" data-toggle="modal"
+                            data-id="'. $data->id .'"><i class="far fa-edit"></i> Edit</a>';
+                    }
                 })
-                ->escapeColumns([])
+                ->rawColumns(['actions'])
                 ->make(true);
         }
-
-        return view('settings.source.index');
     }
 
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
+    public function psrSourceList(Request $request)
     {
-        //
-    }
+        $this->authorize('source_access');
 
-    /**
-     * Store a newly created resource in storage.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @return \Illuminate\Http\Response
-     */
-    public function store(Request $request)
-    {
-        $validator = Validator::make($request->all(), [ //ignore this line error it still works
-            'supplier' => 'required|string|unique:sources,supplier',
-            'item_code'   => 'nullable|string',
-            'description'   => 'nullable|string',
-            'unit_price'   => 'nullable|string',
-            'currency_rate'   => 'nullable|string',
-            'tp_php'   => 'nullable|string',
-            'item_group'   => 'nullable|string',
-            'uom'   => 'nullable|string',
-            'mandatory_peripherals'   => 'nullable|string',
-            'cost_periph'   => 'nullable|string'
-        ]);
+        if ($request->ajax()) {
+            $sources = Source::select('supplier', 'item_code', 'description')->latest()->get();
 
-        if ($validator->fails()) {
-            Alert::error('Invalid Data', $validator->errors()->first()); //ignore the error it still works
-            return view('settings.source.index');
+            return Datatables::of($sources)
+                ->make(true);
         }
-
-        $saveSource = new Source;
-        $saveSource->supplier = $request->supplier;
-        $saveSource->item_code = $request->item_code;
-        $saveSource->description = $request->description;
-        $saveSource->unit_price = $request->unit_price;
-        $saveSource->currency_rate = $request->currency_rate;
-        $saveSource->tp_php = $request->tp_php;
-        $saveSource->item_group = $request->item_group;
-        $saveSource->uom = $request->uom;
-        $saveSource->mandatory_peripherals = $request->mandatory_peripherals;
-        $saveSource->cost_periph = $request->cost_periph;
-        $saveSource->save();
-
-        Alert::success('Source Details', 'Added successfully'); //ignore the error it still works
-
-        return view('settings.source.index');
     }
 
-    /**
-     * Display the specified resource.
-     *
-     * @param  \App\Models\Source  $source
-     * @return \Illuminate\Http\Response
-     */
-    public function show(Source $source)
+    public function sourceSearch(Request $request)
     {
-        //
+        $this->authorize('source_access');
+
+        $sources = Source::where('item_code', 'LIKE', '%'.$request->input('term', '').'%')
+                        ->get(['id', 'item_code as text']);
+        return ['results' => $sources];
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     *
-     * @param  \App\Models\Source  $source
-     * @return \Illuminate\Http\Response
-     */
-    public function edit(Source $source)
+    public function sourceDetails($source_id)
     {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \App\Models\Source  $source
-     * @return \Illuminate\Http\Response
-     */
-    public function update(Request $request, Source $source)
-    {
-        $validator = Validator::make($request->all(), [ //ignore this line error it still works
-            'id' => 'required|numeric',
-            'supplier' => 'required|string|unique:sources,supplier,'. $request->id,
-            'item_code'   => 'nullable|string',
-            'description'   => 'nullable|string',
-            'unit_price'   => 'nullable|string',
-            'currency_rate'   => 'nullable|string',
-            'tp_php'   => 'nullable|string',
-            'item_group'   => 'nullable|string',
-            'uom'   => 'nullable|string',
-            'mandatory_peripherals'   => 'nullable|string',
-            'cost_periph'   => 'nullable|string'
-        ]);
-
-        if ($validator->fails()) {
-            Alert::error('Invalid Data', $validator->errors()->first()); //ignore the error it still works
-            return view('settings.source.index');
-        }
-
-        $updateSource = Source::findOrFail($request->id);
-        $updateSource->supplier = $request->supplier;
-        $updateSource->item_code = $request->item_code;
-        $updateSource->description = $request->description;
-        $updateSource->unit_price = $request->unit_price;
-        $updateSource->currency_rate = $request->currency_rate;
-        $updateSource->tp_php = $request->tp_php;
-        $updateSource->item_group = $request->item_group;
-        $updateSource->uom = $request->uom;
-        $updateSource->mandatory_peripherals = $request->mandatory_peripherals;
-        $updateSource->cost_periph = $request->cost_periph;
-        $updateSource->save();
-
-        Alert::success('Source Details', 'Updated successfully'); //ignore the error it still works
-
-        return view('settings.source.index');
+        $this->authorize('source_access');
         
+        $source = Source::find($source_id);
+
+        if (!$source) {
+            return response()->json(['message' => 'Not Found!'], 404);
+        }
+
+        return response()->json($source);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param  \App\Models\Source  $source
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy(Source $source)
+    public function sourceDescription($source_id)
     {
-        //
+        $this->authorize('source_access');
+        
+        $source = Source::select('item_code', 'description', 'currency_rate', 'tp_php', 'cost_of_peripherals')->find($source_id);
+
+        if (!$source) {
+            return response()->json(['message' => 'Not Found!'], 404);
+        }
+
+        return response()->json($source);
     }
 }

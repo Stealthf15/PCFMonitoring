@@ -9,12 +9,15 @@ class PCFList extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'pcf_no',
-        'item_code',
-        'description',
-        'quantity',
-        'sales',
-        'total_sales'
-    ];
+    protected $guarded = [];
+
+    public function source() 
+    {
+        return $this->belongsTo(Source::class);
+    }
+
+    public function pcfRequests() 
+    {
+        return $this->hasMany(PCFRequest::class);
+    }
 }

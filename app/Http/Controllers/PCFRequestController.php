@@ -2,348 +2,511 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use App\Models\PCFRequest;
 use App\Models\PCFList;
-use Illuminate\Http\Request;
-use Alert;
 use App\Models\PCFInclusion;
-use Validator;
+use App\Models\TemporaryFile;
+use Illuminate\Http\Request;
 use Yajra\Datatables\Datatables;
 use PDF;
+use Illuminate\Support\Facades\DB;
+use App\Services\PCFRequestService;
+use App\Http\Requests\PCFRequest\StorePCFRequestRequest;
+use App\Http\Requests\PCFRequest\UpdatePCFRequestRequest;
 
 class PCFRequestController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
+    private $pcf_no;
+
     public function index(Request $request)
     {
+        $this->authorize('pcf_request_access');
+    
+        return view('PCF.index');
+    }
+
+    public function create(PCFList $pCFList)
+    {
+        $this->authorize('pcf_request_create');
+
+        //get max value of pcf number
+        $pcfMaxVal = PCFRequest::max('pcf_no');
+
+        if(empty($pcfMaxVal)) {
+            $this->pcf_no = '000001';
+        } else {
+            $this->pcf_no = str_pad($pcfMaxVal + 1, 6, "0", STR_PAD_LEFT);
+        }
+
+        return view('PCF.sub.create_request', [
+            'pcf_no' => $this->pcf_no,
+        ]);
+    }
+
+    public function store(StorePCFRequestRequest $request)
+    {
+        $this->authorize('pcf_request_store');
+
+        DB::beginTransaction();
+
+        try {
+
+            $pcfRequest = PCFRequest::create($request->validated() + [
+                'status_id' => 1,
+                'psr' => auth()->user()->name,
+                'created_by' => auth()->user()->id,
+            ]);
+
+            $pcfList = PCFList::where('pcf_no', $pcfRequest->pcf_no)->update(['p_c_f_request_id' => $pcfRequest->id]);
+            PCFInclusion::where('pcf_no', $pcfRequest->pcf_no)->update(['p_c_f_request_id' => $pcfRequest->id]);
+
+            if ($pcfList == 0) {
+                toast()->info('Info', 'You are required to add at least one (1) product in the Item List section.');
+                return back();
+            }
+
+            DB::commit();
+            alert()->success('Success','PCF Request has been created');
+        }
+        catch (\Throwable $th) {
+            DB::rollBack();
+        }
+
+        return redirect()->route('PCF.index');
+    }
+
+    public function edit(PCFRequest $p_c_f_request)
+    {
+        return view('PCF.edit', compact('p_c_f_request'));
+    }
+
+    public function update(UpdatePCFRequestRequest $request, PCFRequest $p_c_f_request)
+    {
+        $this->authorize('pcf_request_update');
+
+        DB::beginTransaction();
+
+        try {
+            $p_c_f_request->update($request->validated());
+
+            DB::commit();
+            alert()->success('Success','PCF Request has been updated');
+
+        }
+        catch (\Throwable $th) {
+            DB::rollBack();
+        }
+
+        return redirect()->route('PCF.index');
+    }
+
+    public function pcfRequestList(Request $request) 
+    {
+        $this->authorize('pcf_request_access');
+        
         if ($request->ajax()) {
+            $pcfRequest = PCFRequest::with('status', 'media')
+                        ->select('p_c_f_requests.*')
+                        ->get();
 
-            $getPCFRequest = PCFRequest::orderBy('pcf_no')->get();
-
-            return Datatables::of($getPCFRequest)
-                ->addIndexColumn()
-                ->addColumn('pcf_no', function ($data) {
-                    return $data->pcf_no;
-                })
-                ->addColumn('date', function ($data) {
-                    return $data->date;
-                })
-                ->addColumn('institution', function ($data) {
-                    return $data->institution;
-                })
-                ->addColumn('psr', function ($data) {
-                    return $data->psr;
-                })
-                ->addColumn('profit', function ($data) {
-                    return $data->profit;
-                })
-                ->addColumn('profit_rate', function ($data) {
-                    return $data->profit_rate;
+            return Datatables::of($pcfRequest)
+                ->addColumn('status', function ($data) {
+                    if (auth()->user()->can('psr_view_pcf') && in_array($data->status_id, [1, 2, 3, 4, 5])) {
+                        return '<span class="badge badge-light">' . $data->status->find(1)->name . '</span>';
+                    } elseif (auth()->user()->can('psr_view_pcf') && $data->status_id == 7) {
+                        return '<span class="badge badge-light">' . $data->status->name . '</span>';
+                    } else {
+                        return '<span class="badge badge-light">' . $data->status->name . '</span>';
+                    }
                 })
                 ->addColumn('actions', function ($data) {
 
-                    if(auth()->user()->can('view') && auth()->user()->can('edit')) {
-                        if ($data->status == 0) {
+                    $uploadPcf = '<a href="'. route('PCF.edit', [$data->id]) .'" class="badge badge-info">
+                                    <i class="fas fa-upload"></i> Upload Approved PCF</a>
+                                <a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
 
-                            return
-                            ' 
-                            <td style="text-align: center; vertical-align: middle">
-                                <a href="#" class="badge badge-info" data-toggle="modal"
-                                    data-id="'.$data->id .'"
-                                    data-pcf_no="'.$data->pcf_no .'"
-                                    data-date="'.$data->date .'"
-                                    data-institution="'.$data->institution .'"
-                                    data-duration="'.$data->duration .'"
-                                    data-date_biding="'.$data->date_biding .'"
-                                    data-bid_docs_price="'.$data->bid_docs_price .'"
-                                    data-psr="'.$data->psr .'"
-                                    data-manager="'.$data->manager .'"
-                                    data-annual_profit="'.$data->profit .'"
-                                    data-annual_profit_rate="'.$data->profit_rate .'"
-                                    data-target="#editPCFRequestModal"
-                                    onclick="editPCFRequest($(this))">
-                                    <i class="fas fa-edit"></i>
-                                    Edit
-                                </a>
-                                <a href="#" class="badge badge-success"
-                                    data-id="' . $data->id . '"
-                                    onclick="ApproveRequest($(this))">
-                                    <i class="fas fa-check"></i> 
-                                    Approve
-                                </a>
-                                <a href="' . route('PCF.download_pdf', $data->pcf_no) .'" class="badge badge-success">
-                                    <i class="far fa-file-pdf"></i>
-                                    Download PDF
-                                </a>
-                            </td>
-                            ';
+                    $wViewQuotation = '<a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>
+                                <a target="_blank" href="' . route('PCF.view_quotation', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View Quotation (PDF)</a>';
+
+                    $approval = '<a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-up"></i> Approve</a>
+                                <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-down"></i> Disapprove</a>
+                                <a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+
+                    $wQuotation = '<a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-up"></i> Approve</a>
+                                <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-down"></i> Disapprove</a>
+                                <a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>
+                                <a target="_blank" href="' . route('PCF.view_quotation', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View Quotation (PDF)</a>';
+                                
+                    $wEditApproval = '<a href="'. route('PCF.edit', [$data->id]) .'" class="badge badge-info">
+                                    <i class="fas fa-edit"></i> Edit</a>
+                                <a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-up"></i> Approve</a>
+                                <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-down"></i> Disapprove</a>
+                                <a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+                    
+                    $wEditQuotation = '<a href="'. route('PCF.edit', [$data->id]) .'" class="badge badge-info">
+                                    <i class="fas fa-edit"></i> Edit</a>
+                                <a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-up"></i> Approve</a>
+                                <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-down"></i> Disapprove</a>
+                                <a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>
+                                <a target="_blank" href="' . route('PCF.view_quotation', $data->pcf_no) .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View Quotation (PDF)</a>';
+
+                    $uploadedPcfView = '<a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+
+                    $uploadedPcfwEditView = '<a href="'. route('PCF.edit', [$data->id]) .'" class="badge badge-info">
+                                    <i class="fas fa-upload"></i> Upload Approved PCF</a>
+                                <a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+
+                    $uploadedPcfApproval = '<a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-up"></i> Approve</a>
+                                <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-down"></i> Disapprove</a>
+                                <a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+
+                    $uploadedPcfEditApproval = '<a href="'. route('PCF.edit', [$data->id]) .'" class="badge badge-info">
+                                    <i class="fas fa-edit"></i> Edit</a>
+                                <a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-up"></i> Approve</a>
+                                <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                    <i class="far fa-thumbs-down"></i> Disapprove</a>
+                                <a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                                    rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+                    
+                    $uploadedPcfWQuotationApproval = '<a href="'. route('PCF.edit', [$data->id]) .'" class="badge badge-info">
+                                    <i class="fas fa-edit"></i> Edit</a>
+                            <a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                <i class="far fa-thumbs-up"></i> Approve</a>
+                            <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                                <i class="far fa-thumbs-down"></i> Disapprove</a>
+                            <a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                                rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>
+                            <a target="_blank" href="' . route('PCF.view_quotation', $data->pcf_no) .'" class="badge badge-light" 
+                                rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View Quotation (PDF)</a>';
+
+                    $uploadedPcfWOEditApproval = '<a href="javascript:void(0);" class="badge badge-success approvePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                            <i class="far fa-thumbs-up"></i> Approve</a>
+                        <a href="javascript:void(0);" class="badge badge-danger disapprovePcfRequest" data-id="' . $data->id . '" data-toggle="modal">
+                            <i class="far fa-thumbs-down"></i> Disapprove</a>
+                        <a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                            rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>
+                        <a target="_blank" href="' . route('PCF.view_quotation', $data->pcf_no) .'" class="badge badge-light" 
+                            rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View Quotation (PDF)</a>';
+
+                    $uploadedPcfwQuotationView = '<a target="_blank" href="' . $data->path() .'" class="badge badge-light" 
+                                rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>
+                            <a target="_blank" href="' . route('PCF.view_quotation', $data->pcf_no) .'" class="badge badge-light" 
+                                rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View Quotation (PDF)</a>';
+
+
+                    if (auth()->user()->can('pcf_request_edit')) {
+                        if (!empty($data->pcf_document)) {
+                            if ((auth()->user()->can('psr_mgr_approve_pcf') || auth()->user()->can('mktg_approve_pcf')) && 
+                                ($data->status_id == 1)) {
+                                return $uploadedPcfEditApproval;
+                            } else if (auth()->user()->can('nsm_approve_pcf') && (in_array($data->status_id, [2, 3]))) {
+                                return $uploadedPcfWQuotationApproval;
+                            } else if (auth()->user()->can('view_approved_pcf') && in_array($data->status_id, [4, 5, 6])) {
+                                return $uploadedPcfwQuotationView;
+                            }
+                        } else {
+                            if ((auth()->user()->can('psr_mgr_approve_pcf') || auth()->user()->can('mktg_approve_pcf')) && 
+                                ($data->status_id == 1)) {
+                                    return $wEditApproval;
+                            } else if (auth()->user()->can('nsm_approve_pcf') && (in_array($data->status_id, [2, 3]))) {
+                                return $wEditQuotation;
+                            } else if (auth()->user()->can('view_approved_pcf') && in_array($data->status_id, [4, 5, 6])) {
+                                return $wViewQuotation;
+                            }
                         }
-    
-                        return
-                            ' 
-                        <td style="text-align: center; vertical-align: middle">
-                            <a href="#" class="badge badge-info" data-toggle="modal"
-                                data-id="'.$data->id .'"
-                                data-pcf_no="'.$data->pcf_no .'"
-                                data-date="'.$data->date .'"
-                                data-institution="'.$data->institution .'"
-                                data-duration="'.$data->duration .'"
-                                data-date_biding="'.$data->date_biding .'"
-                                data-bid_docs_price="'.$data->bid_docs_price .'"
-                                data-psr="'.$data->psr .'"
-                                data-manager="'.$data->manager .'"
-                                data-annual_profit="'.$data->profit .'"
-                                data-annual_profit_rate="'.$data->profit_rate .'"
-                                data-target="#editPCFRequestModal"
-                                onclick="editPCFRequest($(this))">
-                                <i class="fas fa-edit"></i>
-                                Edit
-                            </a>
-                            <a href="#" class="badge badge-danger"
-                                data-id="' . $data->id . '"
-                                onclick="DisApproveRequest($(this))">
-                                <i class="fas fa-times"></i> 
-                                Dis-Approve
-                            </a>
-                        </td>
-                        ';
-
-                    } else if(auth()->user()->can('view')) {
-                        
-                        return
-                            ' 
-                        <td style="text-align: center; vertical-align: middle">
-                            <a href="#" class="badge badge-info" data-toggle="modal"
-                                data-id="'.$data->id .'"
-                                data-pcf_no="'.$data->pcf_no .'"
-                                data-date="'.$data->date .'"
-                                data-institution="'.$data->institution .'"
-                                data-duration="'.$data->duration .'"
-                                data-date_biding="'.$data->date_biding .'"
-                                data-bid_docs_price="'.$data->bid_docs_price .'"
-                                data-psr="'.$data->psr .'"
-                                data-manager="'.$data->manager .'"
-                                data-annual_profit="'.$data->profit .'"
-                                data-annual_profit_rate="'.$data->profit_rate .'"
-                                data-target="#editPCFRequestModal"
-                                onclick="editPCFRequest($(this))">
-                                <i class="far fa-eye"></i>
-                                View
-                            </a>
-                        </td>
-                        ';
                     }
+                    else {
+                        if (!empty($data->pcf_document)) {
+                            if (auth()->user()->can('psr_view_pcf') && ($data->status_id == 7)) {
+                                return $uploadedPcfwEditView;
+                            } elseif (auth()->user()->can('psr_view_pcf')) {
+                                return $uploadedPcfView;
+                            } else if (auth()->user()->can('acct_approve_pcf') && ($data->status_id == 4)) {
+                                return $uploadedPcfApproval;
+                            } else if (auth()->user()->can('cfo_approve_pcf') && ($data->status_id == 5)) {
+                                return $uploadedPcfWOEditApproval;
+                            } else if (auth()->user()->can('view_approved_pcf') && in_array($data->status_id, [4, 5, 6])) {
+                                return $uploadedPcfwQuotationView;
+                            }
+                        } else {
+                            if (auth()->user()->can('psr_view_pcf') && ($data->status_id == 7)) {
+                                return $uploadPcf;
+                            } elseif (auth()->user()->can('psr_view_pcf')) {
+                                return '<a target="_blank" href="' . route('PCF.view_pdf', $data->pcf_no) .'" class="badge badge-light" 
+                                        rel="noopener noreferrer"><i class="far fa-file-pdf"></i> View PCF (PDF)</a>';
+                            } else if (auth()->user()->can('acct_approve_pcf') && ($data->status_id == 4)) {
+                                return $approval;
+                            } else if (auth()->user()->can('cfo_approve_pcf') && ($data->status_id == 5)) {
+                                return $wQuotation;
+                            } else if (auth()->user()->can('view_approved_pcf') && in_array($data->status_id, [4, 5, 6])) {
+                                return $wViewQuotation;
+                            }
+                        }
+                    }            
+
                 })
-                ->escapeColumns([])
+                ->rawColumns(['status', 'actions'])
                 ->make(true);
         }
-
-        return view('PCF.index');
     }
 
-    /**
-     * Show the form for creating a new resource.
-     *
-     * @return \Illuminate\Http\Response
-     */
-    public function create()
+    public function pcfRequestDetails($pcfRequestId)
     {
-        //
+        $this->authorize('pcf_request_access');
+
+        $pcf_request = PCFRequest::findOrFail($pcfRequestId);
+        
+        return response()->json($pcf_request);
     }
 
-    /**
-     * Store a newly created resource in storage.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @return \Illuminate\Http\Response
-     */
-    public function store(Request $request)
+
+    public function approveRequest($pcfRequest_id, PCFRequestService $service)
     {
-        $validator = Validator::make($request->all(), [ 
-            'pcf_no'   => 'required|string',
-            'date'   => 'required|string',
-            'institution'   => 'nullable|string',
-            'duration_contract'   => 'required|string',
-            'date_bidding'   => 'required|string',
-            'bid_docs_price'   => 'required|string',
-            'manager'   => 'required|string',
-            'annual_profit'   => 'required|string',
-            'annual_profit_rate'   => 'nullable|string'
+        $service->approveRequestService($pcfRequest_id);
+        return response()->json(['success' => 'success'], 200);
+    }
+
+    public function disapproveRequest($pcfRequest_id, PCFRequestService $service)
+    {
+        $service->disapproveRequestService($pcfRequest_id);
+        return response()->json(['success' => 'success'], 200);
+    }
+
+    public function storePCFPdfFile(Request $request, PCFRequest $p_c_f_request)
+    {
+        $this->authorize('psr_upload_pcf');
+
+        $validatedData = $request->validate([
+            'pcf_rfq' => ['required',],
         ]);
 
-        if ($validator->fails()) {
-            Alert::error('Invalid Data', $validator->errors()->first()); 
-            return view('PCF.index');
+        DB::beginTransaction();
+
+        try {
+            $temporaryFile = TemporaryFile::where('folder', $validatedData)->first();
+            if ($temporaryFile) {
+
+                $p_c_f_request->update([
+                    'pcf_document' => $temporaryFile->file_name,
+                    'status_id' => 1,
+                ]);
+
+                $p_c_f_request->addMedia(storage_path('app/pcf_rfq/tmp/' . $request->pcf_rfq . '/' . $temporaryFile->file_name))
+                        ->toMediaCollection('approved_pcf_rfq');
+
+                rmdir(storage_path('app/pcf_rfq/tmp/' . $request->pcf_rfq));
+                $temporaryFile->delete();
+            }
+
+            DB::commit();
+            alert()->success('Success', 'The PCF file has been uploaded.');
+        }
+        catch (\Throwable $th) {
+            DB::rollBack();
         }
 
-        $savePcfRequest = new PCFRequest;
-        $savePcfRequest->pcf_no = $request->pcf_no;
-        $savePcfRequest->date = $request->date;
-        $savePcfRequest->institution = $request->institution;
-        $savePcfRequest->duration = $request->duration_contract;
-        $savePcfRequest->date_biding = $request->date_bidding;
-        $savePcfRequest->bid_docs_price = $request->bid_docs_price;
-        $savePcfRequest->psr = \Auth::user()->name;
-        $savePcfRequest->manager = $request->manager;
-        $savePcfRequest->profit = $request->annual_profit;
-        $savePcfRequest->profit_rate = $request->annual_profit_rate;
-        $savePcfRequest->created_by = \Auth::user()->id;
-        $savePcfRequest->save();
-
-        Alert::success('PCF Request Details', 'Added successfully'); 
-
-        return view('PCF.index');
+        return redirect()->route('PCF.index');
     }
 
-    /**
-     * Display the specified resource.
-     *
-     * @param  \App\Models\PCFRequest  $pCFRequest
-     * @return \Illuminate\Http\Response
-     */
-    public function show(PCFRequest $pCFRequest)
+    public function getGrandTotal($pcf_no)
     {
-        //
-    }
+        $grandTotalGrossProfit = PCFList::where('pcf_no', $pcf_no)->sum('gross_profit');
+        $grandTotalCostPerYear = PCFInclusion::where('pcf_no', $pcf_no)->sum('cost_year');
+        $grandTotalNetSales = PCFList::where('pcf_no', $pcf_no)->sum('total_net_sales'); //ito ung zero
 
-    /**
-     * Show the form for editing the specified resource.
-     *
-     * @param  \App\Models\PCFRequest  $pCFRequest
-     * @return \Illuminate\Http\Response
-     */
-    public function edit(PCFRequest $pCFRequest)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \App\Models\PCFRequest  $pCFRequest
-     * @return \Illuminate\Http\Response
-     */
-    public function update(Request $request, PCFRequest $PCFRequest)
-    {
-        $validator = Validator::make($request->all(), [ 
-            'pcf_request_id' => 'required|numeric',
-            'pcf_no'   => 'required|string',
-            'date'   => 'required|string',
-            'institution'   => 'nullable|string',
-            'duration'  => 'required|string',
-            'date_biding'   => 'required|string',
-            'bid_docs_price'   => 'required|string',
-            'psr'   => 'required|string',
-            'manager'   => 'required|string',
-            'profit'   => 'required|string',
-            'profit_rate'   => 'nullable|string'
-        ]);
-
-        if ($validator->fails()) {
-            Alert::error('Invalid Data', $validator->errors()->first()); 
-            return redirect()->route('PCF');
+        $annual_profit = $grandTotalGrossProfit - $grandTotalCostPerYear;
+        
+        if ($grandTotalNetSales > 0) { // pano to if negative? //try natin mag negative
+            $annual_profit_rate = ($annual_profit / $grandTotalNetSales) * 100;
+        } else { //pag 0 then = to 0 yung din sya
+            $annual_profit_rate = 0;
         }
 
-        $savePcfRequest = PCFRequest::findOrFail($request->pcf_request_id);
-        $savePcfRequest->date = $request->date;
-        $savePcfRequest->institution = $request->institution;
-        $savePcfRequest->duration = $request->duration;
-        $savePcfRequest->date_biding = $request->date_biding;
-        $savePcfRequest->bid_docs_price = $request->bid_docs_price;
-        $savePcfRequest->psr = $request->psr;
-        $savePcfRequest->manager = $request->manager;
-        $savePcfRequest->profit = $request->profit;
-        $savePcfRequest->profit_rate = $request->profit_rate;
-        $savePcfRequest->save();
-
-        Alert::success('PCF Request Details', 'Updated successfully'); 
-
-        return redirect()->route('PCF');
+        return response()->json(array(
+            'annual_profit' => number_format((float)$annual_profit, 2, '.', ''),
+            'annual_profit_rate' => number_format((float)$annual_profit_rate, 0, '.', ''),
+        ), 200);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     *
-     * @param  \App\Models\PCFRequest  $pCFRequest
-     * @return \Illuminate\Http\Response
-     */
-    public function destroy(PCFRequest $pCFRequest)
+    public function viewPdf($pcf_no)
     {
-        //
-    }
+        $this->authorize('view_pcf');
 
-    public function ApproveRequest($id)
-    {
-
-        if (!empty($id)) {
-            $getRequestSataus = PCFRequest::find($id);
-            $getRequestSataus->status = 1;
-            $getRequestSataus->save();
-
-            return response()->json(['success' => 'success'], 200);
-        }
-
-        return response()->json(['error' => 'invalid'], 401);
-    }
-
-    public function DisapproveRequest($id)
-    {
-
-        if (!empty($id)) {
-            $getRequestSataus = PCFRequest::find($id);
-            $getRequestSataus->status = 0;
-            $getRequestSataus->save();
-
-            return response()->json(['success' => 'success'], 200);
-        }
-
-        return response()->json(['error' => 'invalid'], 401);
-    }
-
-    public function downloadPdf($pcf_no)
-    {
-        //check if valid request and authorized user
-        if (\Auth::check() && !empty($pcf_no)) {
+        if (auth()->check() && !empty($pcf_no)) {
 
             $get_pcf_list = PCFList::select(
-                'p_c_f_lists.item_code AS item_code',
-                'p_c_f_lists.description AS description',
                 'p_c_f_lists.quantity AS quantity',
                 'p_c_f_lists.sales AS sales',
                 'p_c_f_lists.total_sales AS total_sales',
+                'p_c_f_lists.above_standard_price AS above_standard_price',
+
+                'sources.item_code as item_code',
+                'sources.description as description',
+
                 'p_c_f_requests.date AS date',
                 'p_c_f_requests.institution AS institution',
-                'p_c_f_requests.duration AS duration',
-                'p_c_f_requests.date_biding AS date_biding',
+                'p_c_f_requests.contract_duration AS duration',
+                'p_c_f_requests.address AS address',
+                'p_c_f_requests.contact_person AS contact_person',
+                'p_c_f_requests.designation AS designation',
+                'p_c_f_requests.thru_designation AS thru_designation',
+                'p_c_f_requests.supplier AS supplier',
+                'p_c_f_requests.terms AS terms',
+                'p_c_f_requests.validity AS validity',
+                'p_c_f_requests.delivery AS delivery',
+                'p_c_f_requests.warranty AS warranty',
+                'p_c_f_requests.date_bidding AS date_bidding',
                 'p_c_f_requests.bid_docs_price AS bid_docs_price',
                 'p_c_f_requests.psr AS psr',
                 'p_c_f_requests.manager AS manager',
-                'p_c_f_requests.profit AS annual_profit',
-                'p_c_f_requests.profit_rate AS annual_profit_rate',
-                'p_c_f_inclusions.item_code AS inclusions_item_code',
-                'p_c_f_inclusions.description AS inclusions_description',
-                'p_c_f_inclusions.type AS inclusions_type',
-                'p_c_f_inclusions.quantity AS inclusions_qty',
+                'p_c_f_requests.annual_profit AS annual_profit',
+                'p_c_f_requests.annual_profit_rate AS annual_profit_rate',
             )
             ->leftJoin('p_c_f_requests','p_c_f_requests.pcf_no','p_c_f_lists.pcf_no')
-            ->leftJoin('p_c_f_inclusions','p_c_f_inclusions.pcf_no','p_c_f_lists.pcf_no')
+            ->join('sources', 'sources.id', 'p_c_f_lists.source_id')
             ->where('p_c_f_lists.pcf_no', $pcf_no)
-            ->orderBy('p_c_f_lists.id', 'DESC')
+            ->orderBy('p_c_f_lists.id', 'ASC')
             ->get();
 
-            $get_pcf_inclusions = PCFInclusion::where('pcf_no',$pcf_no)->get();
+            $get_pcf_inclusions = PCFInclusion::select(
+                'p_c_f_inclusions.type as type',
+                'p_c_f_inclusions.serial_no as serial_no',
+                'p_c_f_inclusions.quantity as quantity',
+                'sources.item_code as item_code',
+                'sources.description as description',
+            )
+            ->join('sources', 'sources.id', 'p_c_f_inclusions.source_id')
+            ->where('pcf_no', $pcf_no)
+            ->get();
+
+            $approver = User::select(
+                'users.name as name',
+            )
+            ->join('p_c_f_requests', 'p_c_f_requests.approved_by', 'users.id')
+            ->where('p_c_f_requests.pcf_no', $pcf_no)
+            ->get();
+
+            $itemBundles = PCFList::select(
+                'bundle_products.quantity AS quantity',
+
+                'sources.item_code AS item_code',
+                'sources.description AS description'
+            )
+            ->join('bundle_products', 'bundle_products.p_c_f_list_id', 'p_c_f_lists.id')
+            ->join('sources', 'sources.id', 'bundle_products.source_id')
+            ->where('pcf_no', $pcf_no)
+            ->get();
+
+            $machineBundles = PCFInclusion::select(
+                'bundle_products.quantity AS quantity',
+
+                'sources.item_code AS item_code',
+                'sources.description AS description'
+            )
+            ->join('bundle_products', 'bundle_products.p_c_f_inclusion_id', 'p_c_f_inclusions.id')
+            ->join('sources', 'sources.id', 'bundle_products.source_id')
+            ->where('pcf_no', $pcf_no)
+            ->get();
             
-            $pdf = PDF::loadView('PCF.pdf.index', compact('get_pcf_list', 'get_pcf_inclusions', 'pcf_no'));
-            $pdf->setPaper('legal', 'landscape');
-            return $pdf->download('pcf_request.pdf');
+            $pdf = PDF::loadView('PCF.pdf.index', compact('get_pcf_list', 'get_pcf_inclusions', 'pcf_no', 'approver', 'itemBundles', 'machineBundles'));
+            $pdf->setPaper('legal', 'portrait');
+            return $pdf->stream('PCF NO_'. $get_pcf_list[0]->institution .'_' . $get_pcf_list[0]->supplier . '_' .$get_pcf_list[0]->psr .'.pdf', array("Attachment" => false));
+        }
+
+        return response()->json(['error' => 'invalid request'], 400);
+    }
+
+    public function viewQuotation($pcf_no)
+    {
+        $this->authorize('view_quotation');
+
+        if (auth()->check() && !empty($pcf_no)) {
+
+            $pcfList = PCFList::select(
+                'p_c_f_lists.quantity AS quantity',
+                'p_c_f_lists.sales AS sales',
+                'p_c_f_lists.total_sales AS total_sales',
+
+                'p_c_f_requests.date AS date',
+                'p_c_f_requests.institution AS institution',
+                'p_c_f_requests.address AS address',
+                'p_c_f_requests.supplier AS supplier',
+                'p_c_f_requests.terms AS terms',
+                'p_c_f_requests.validity AS validity',
+                'p_c_f_requests.delivery AS delivery',
+                'p_c_f_requests.warranty AS warranty',
+                'p_c_f_requests.status_id AS status',
+
+                'sources.item_code as item_code',
+                'sources.description as description',
+            )
+            ->leftJoin('p_c_f_requests','p_c_f_requests.pcf_no','p_c_f_lists.pcf_no')
+            ->join('sources', 'sources.id', 'p_c_f_lists.source_id')
+            ->where('p_c_f_lists.pcf_no', $pcf_no)
+            ->orderBy('p_c_f_lists.id', 'ASC')
+            ->get();
+
+            $pcfInclusions = PCFInclusion::select(
+                'p_c_f_inclusions.type as type',
+                'p_c_f_inclusions.serial_no as serial_no',
+                'p_c_f_inclusions.quantity as quantity',
+                'sources.item_code as item_code',
+                'sources.description as description',
+            )
+            ->join('sources', 'sources.id', 'p_c_f_inclusions.source_id')
+            ->where('pcf_no', $pcf_no)
+            ->get();
+
+            $itemBundles = PCFList::select(
+                'bundle_products.quantity AS quantity',
+
+                'sources.item_code AS item_code',
+                'sources.description AS description'
+            )
+            ->join('bundle_products', 'bundle_products.p_c_f_list_id', 'p_c_f_lists.id')
+            ->join('sources', 'sources.id', 'bundle_products.source_id')
+            ->get();
+
+            $machineBundles = PCFInclusion::select(
+                'bundle_products.quantity AS quantity',
+
+                'sources.item_code AS item_code',
+                'sources.description AS description'
+            )
+            ->join('bundle_products', 'bundle_products.p_c_f_inclusion_id', 'p_c_f_inclusions.id')
+            ->join('sources', 'sources.id', 'bundle_products.source_id')
+            ->get();
+
+            $pdf = PDF::loadView('PCF.quotation.index', compact('pcfList', 'pcfInclusions', 'pcf_no', 'itemBundles', 'machineBundles'));
+            $pdf->setPaper('legal', 'portrait');
+            return $pdf->stream('quotation.pdf', array("Attachment" => false));
         }
 
         //return bad request error
-        return resonponse()->json(['error' => 'invalid request'], 400);
+        return response()->json(['error' => 'invalid request'], 400);
     }
 }

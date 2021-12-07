@@ -15,18 +15,41 @@ class CreatePCFRequestsTable extends Migration
     {
         Schema::create('p_c_f_requests', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('status_id') // status_id
+                ->nullable()
+                ->constrained('statuses')
+                ->onUpdate('cascade')
+                ->onDelete('cascade');
             $table->string('pcf_no');
             $table->date('date');
             $table->string('institution');
-            $table->string('duration');
-            $table->date('date_biding');
-            $table->double('bid_docs_price')->default(0.00);
-            $table->string('psr');
+            $table->string('address');
+            $table->string('contact_person');
+            $table->string('designation');
+            $table->string('thru_designation'); 
+            $table->string('supplier');
+            $table->string('terms');
+            $table->string('validity');
+            $table->string('delivery');
+            $table->string('warranty')->nullable();
+            $table->string('contract_duration');
+            $table->date('date_bidding')->nullable();
+            $table->decimal('bid_docs_price')->nullable();
+            $table->string('psr'); // we can get the name of the PSR by using the column created by;
             $table->string('manager');
-            $table->double('profit', 11, 2)->default(0.00);
-            $table->double('profit_rate', 11, 2)->default(0.00);
-            $table->integer('status')->default(0);
-            $table->integer('created_by');
+            $table->decimal('annual_profit', 12, 2)->default(0.00);
+            $table->decimal('annual_profit_rate');
+            $table->string('pcf_document')->nullable();
+            $table->foreignId('created_by') // user_id
+                ->nullable()
+                ->constrained('users')
+                ->onUpdate('cascade')
+                ->onDelete('cascade');
+            $table->foreignId('approved_by') // user_id
+                ->nullable()
+                ->constrained('users')
+                ->onUpdate('cascade')
+                ->onDelete('cascade');
             $table->timestamps();
         });
     }

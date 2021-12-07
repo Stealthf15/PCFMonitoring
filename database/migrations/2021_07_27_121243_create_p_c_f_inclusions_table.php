@@ -16,16 +16,23 @@ class CreatePCFInclusionsTable extends Migration
         Schema::create('p_c_f_inclusions', function (Blueprint $table) {
             $table->id();
             $table->string('pcf_no');
-            $table->string('item_code');
-            $table->string('description');
+            $table->foreignId('source_id')
+                ->nullable()
+                ->constrained('sources')
+                ->onUpdate('cascade')
+                ->onDelete('cascade');
+            $table->foreignId('p_c_f_request_id')
+                ->nullable()
+                ->constrained('p_c_f_requests')
+                ->onUpdate('cascade')
+                ->onDelete('cascade');
             $table->string('serial_no');
             $table->string('type');
             $table->integer('quantity');
-            $table->double('mandatory_peripherals', 11, 2)->default(0.00);
-            $table->double('opex', 11, 2)->default(0.00);
-            $table->double('total_cost', 11, 2)->default(0.00);
-            $table->double('depreciable_life', 11, 2)->default(0.00);
-            $table->double('cost_year', 11, 2)->default(0.00);
+            $table->decimal('opex', 11, 2)->default(0.00);
+            $table->decimal('total_cost', 11, 2)->default(0.00);
+            $table->decimal('cost_year', 11, 2)->default(0.00);
+            $table->tinyInteger('depreciable_life');
             $table->timestamps();
         });
     }

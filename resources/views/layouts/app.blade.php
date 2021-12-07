@@ -2,25 +2,23 @@
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
     <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
         <meta name="csrf-token" content="{{ csrf_token() }}">
         <meta name="HandheldFriendly" content="true" >
         <meta name="MobileOptimized" content="width">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <title>@yield('title')</title>
         <meta name="description" content="Scientific Biotech Specialties Web Laboratory Information System" />
-        <link rel="icon" href="{{ asset('img/sbsi-32px-favicon-1.png') }}">
+        <link rel="icon" href="{{ asset('img/sbsi-favicon.ico') }}">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,200;0,300;0,400;0,600;0,700;0,800;0,900;1,200;1,300;1,400;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet">
         <link href="{{ asset('dist/fontawesome-free/css/all.min.css') }}" rel="stylesheet" type="text/css">
-        <link rel="stylesheet" href="//cdn.datatables.net/1.10.25/css/jquery.dataTables.min.css">
+        <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/v/bs5/dt-1.11.3/r-2.2.9/datatables.min.css"/>
         @stack('styles')
-        <link rel="stylesheet" href="{{ asset('dist/dropify/css/dropify.min.css') }}">
-        <link href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i" rel="stylesheet">
         <link href="{{ asset('css/sb-admin-2.min.css') }}" rel="stylesheet">
     </head>
     <body id="page-top">
-
-        @include('sweetalert::alert')
-
         @yield('content')
         <!-- Scroll to Top Button-->
         <a class="scroll-to-top rounded" href="#page-top">
@@ -50,31 +48,17 @@
             </div>
         </div>
         <!-- Bootstrap core JavaScript-->
-        <script src="{{ asset('dist/jquery/jquery.min.js') }}"></script>
-        <script src="{{ asset('dist/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
-        <script src="//cdn.datatables.net/1.10.25/js/jquery.dataTables.min.js"></script>
-        @stack('scripts')
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js" integrity="sha512-894YE6QWD5I59HgZOGReFYm4dnWc1Qt5NtvYSaNcOP+u1T9qYdvdihz0PPSiiqn/+/3e7Jo4EaG7TubfWGUrMQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-Piv4xVNRyMGpqkS2by6br4gNJ7DXjqk09RmUpJ8jgGtD7zP9yug3goQfGII0yAns" crossorigin="anonymous"></script>
+        <script type="text/javascript" src="https://cdn.datatables.net/v/bs5/dt-1.11.3/r-2.2.9/datatables.min.js"></script>
         <!-- Core plugin JavaScript-->
         <script src="{{ asset('dist/jquery-easing/jquery.easing.min.js') }}"></script>
-
+        @stack('scripts')
         <!-- Custom scripts for all pages-->
         <script src="{{ asset('js/sb-admin-2.min.js') }}"></script>
-
-        <!-- sbsi js -->
-        <script src="{{ asset('js/sbsi.js') }}"></script>
-
         <!-- Sweet alert 2 -->
-        <script src="//cdn.jsdelivr.net/npm/sweetalert2@10"></script>
-
-        <!-- dropify -->
-        <script src="{{ asset('dist/dropify/js/dropify.min.js') }}"></script>
-
-        <!-- Page level plugins -->
-        <script src="{{ asset('dist/chart.js/Chart.min.js') }}"></script>
-
-        <!-- Page level custom scripts -->
-        <script src="{{ asset('js/demo/chart-area-demo.js') }}"></script>
-        <script src="{{ asset('js/demo/chart-pie-demo.js') }}"></script>
+        @include('sweetalert::alert', ['cdn' => "https://cdn.jsdelivr.net/npm/sweetalert2@11"])
+        <script src="//cdn.jsdelivr.net/npm/sweetalert2@11"></script>
         @yield('scripts')
     </body>
 </html>
